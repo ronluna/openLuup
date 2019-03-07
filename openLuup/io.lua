@@ -502,6 +502,8 @@ function server.new (config)
         ip = ip,                    -- ip address of the client
         send    = function (_, ...) return sock:send(...)      end,
         receive = function (_, ...) return sock:receive(...)   end,
+        getpeername = function (_, ...) return sock:getpeername(...) end,
+        getsockname = function (_, ...) return sock:getsockname(...) end,
         closed = false,
         close   = function (self, msg)        -- note optional log message cf. standard socket close
           if not self.closed then
