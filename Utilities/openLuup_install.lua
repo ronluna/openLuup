@@ -44,6 +44,14 @@ _, code = http.request{
 
 assert (code == 200, "GitHub download failed with code " .. code)
 
+p "getting reapzombies.so..."
+_, code = http.request{
+    url = "https://github.com/ronluna/openLuup/blob/master/reapzombies/reapzombies.so",
+    sink = ltn12.sink.file(io.open("reapzombies.so", "wb")),
+  }
+
+assert (code == 200, "GitHub download failed with code " .. code)
+
 p "creating required files and folders"
 lfs.mkdir "www"
 lfs.mkdir "files"
