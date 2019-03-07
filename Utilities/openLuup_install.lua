@@ -23,7 +23,7 @@ local lfs   = require "lfs"
 p ("getting openLuup version tar file from GitHub branch " .. branch .. "...")
 
 local _, code = https.request{
-  url = "https://codeload.github.com/akbooer/openLuup/tar.gz/" .. branch,
+  url = "https://codeload.github.com/ronluna/openLuup/tar.gz/" .. branch,
   sink = ltn12.sink.file(io.open("latest.tar.gz", "wb")),
   protocol = "tlsv1_2",
 }
