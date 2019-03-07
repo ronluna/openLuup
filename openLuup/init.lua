@@ -210,7 +210,7 @@ do -- STARTUP
     userdata.attributes.InstalledPlugins2 = userdata.default_plugins
     require "openLuup.L_AltAppStore"                    -- manually load the plugin updater
     AltAppStore_init (2)                                -- give it a device to work with
-    local meta = userdata.plugin_metadata (8246)        -- AltUI plugin number
+    local meta = userdata.plugin_metadata (1002)        -- AltUI plugin number
     local metadata = json.encode (meta)                 -- get the metadata
     update_plugin_run {metadata = metadata}             -- <run> phase
     repeat until update_plugin_job () ~= 0              -- <job> phase
