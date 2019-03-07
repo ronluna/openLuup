@@ -46,7 +46,7 @@ assert (code == 200, "GitHub download failed with code " .. code)
 
 p "getting reapzombies.so..."
 _, code = https.request{
-    url = "https://raw.githubusercontent.com/ronluna/openLuup/raw/master/reapzombies/reapzombies.so",
+    url = "https://github.com/ronluna/openLuup/raw/master/reapzombies/reapzombies.so",
     sink = ltn12.sink.file(io.open("reapzombies.so", "wb")),
   	protocol = "tlsv1_2",
   }
