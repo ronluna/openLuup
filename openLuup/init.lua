@@ -75,6 +75,9 @@ local compress      = require "openLuup.compression"
 local json          = require "openLuup.json"
 local historian     = require "openLuup.historian"
 
+-- Zombie reaper is needed to reap zombies after fork() (from luaposix)
+require "reapzombies"
+
 local mime  = require "mime"
 
 -- what it says...
