@@ -73,6 +73,9 @@ local timers        = require "openLuup.timers"
 local userdata      = require "openLuup.userdata"
 local loader        = require "openLuup.loader"       -- for static_data, service_data, and loadtime
 local xml           = require "openLuup.xml"          -- for xml.encode()
+local shared        = require "openLuup.shared"
+local posix         = require "posix"
+local socket        = require "socket" -- For request_streaming()
 
 --  local _log() and _debug()
 local _log, _debug = logs.register (ABOUT)
@@ -425,6 +428,134 @@ local function status_scenes_table ()
       active = running,
       status = running and 4 or -1,
     }
+
+    -- DEBUG
+    --luup.log("SCENE TABLES")
+
+    -- Continuous scene status mode fix (ex. Vera feature (webUI v5))
+    local shared = require "openLuup.shared"
+    local custom_rules = require "openLuup.scene_status_rules"
+    local knownschm = shared.known_action_schemes
+    if s.status_mode == "continuous" then
+
+      -- DEBUG
+      --luup.log("SCENE STATUS MODE - CONTINUOUS")
+
+      info[#info].active = true
+      info[#info].status = 4
+      for groupidx, group in pairs(s.groups or {}) do
+        for actidx, actinfo in pairs(group.actions or {}) do
+
+          local actname = actinfo.action
+          local actserv = actinfo.service
+          local actdev = tonumber(actinfo.device)
+
+          -- Action is in rule_overrides list
+          if actserv
+          and custom_rules[actserv]
+          and actname
+          and type(custom_rules[actserv][actname]) == "function"
+          then
+            local is_active = custom_rules[actserv][actname](actinfo)
+            if not is_active then
+              info[#info].active = false
+              info[#info].status = -1
+
+              -- DEBUG
+              --luup.log(string.format("SCENECONTSTATUSDBG OVERRIDEST_TRUE %s %s (dev. %s)",
+              --    tostring(actserv),
+              --    tostring(actname),
+              --    tostring(actdev)
+              --))
+
+            else
+
+              -- DEBUG
+              --luup.log(string.format("SCENECONTSTATUSDBG OVERRIDEST_FALSE %s %s (dev. %s)",
+              --    tostring(actserv),
+              --    tostring(actname),
+              --    tostring(actdev)
+              --))
+            end
+
+          -- No rule overrides found. Try to check state vars from S_*.xml file
+          else
+
+            -- DEBUG
+            --luup.log(string.format("SCENECONTSTATUSDBG NOOVERRIDES %s %s (dev. %s)",
+            --    tostring(actserv),
+            --    tostring(actname),
+            --    tostring(actdev)
+            --))
+
+            if not next(actinfo.arguments) then
+
+              info[#info].active = false
+              info[#info].status = 2
+            --  luup.log(string.format("SCENECONTSTATUSWARN ENOPROCNOARGS"
+            --      .." scene #%s "
+            --      .."service=\"%s\", action=\"%s\", device=%s",
+            --      tostring(id),
+            --      tostring(actserv),
+            --      tostring(actname),
+            --      tostring(actdev)
+            --  ))
+
+            else
+
+              for argidx, arginfo in pairs(actinfo.arguments or {}) do
+
+                local argname = arginfo.name
+                local argexpval = arginfo.value -- expected value
+
+                -- Is argument in known_action_schemes (out state vars
+                -- from S_*.xml file)
+                if actserv
+                and knownschm[actserv]
+                and actname
+                and knownschm[actserv][actname]
+                and argname
+                and knownschm[actserv][actname][argname]
+                and actdev
+                and luup.devices[actdev]
+                then
+                  local argstatevarname = knownschm[actserv][actname][argname]
+                  local curval = luup.variable_get(actserv, argstatevarname, actdev)
+                  if curval ~= nil and curval ~= argexpval then
+
+                    -- DEBUG
+                    luup.log(
+                          "DEBUG: scene is not active: \""
+                        ..tostring(curval)
+                        .."\" != \""
+                        ..tostring(argexpval)
+                        .."\""
+                    )
+
+                    info[#info].active = false
+                    info[#info].status = -1
+                  end
+
+                -- Not enough information or no device
+                else
+                  info[#info].active = false
+                  info[#info].status = 2
+                  luup.log(string.format("SCENECONTSTATUSWARN ENOINFODEV"
+                      .." scene #%s "
+                      .."service=\"%s\", action=\"%s\", device=%s",
+                      tostring(id),
+                      tostring(actserv),
+                      tostring(actname),
+                      tostring(actdev)
+                  ))
+                end
+              end
+            end
+          end
+        end
+      end
+    end    
+
   end
   return info
 end
@@ -809,14 +940,25 @@ local function request_image (_, p)
   if cam then
     local url = p.url or luup.variable_get (sid, "URL", devNo) or ''
     local ip = p.ip or luup.attr_get ("ip", devNo) or ''
+    local protocol = p.protocol or luup.variable_get (sid, "Protocol", devNo) or ''
     
     -- note, once again, the glaring inconsistencies in Vera naming conventions
-    local user = p.user or luup.attr_get ("username", devNo) 
-    local pass = p.pass or luup.attr_get ("password", devNo) 
+    local user = p.user or luup.attr_get ("username", devNo) or luup.variable_get (sid, "username", devNo) 
+    local pass = p.pass or luup.attr_get ("password", devNo) or luup.variable_get (sid, "password", devNo)
     local timeout = tonumber(p.timeout) or 10
     
     if url then
-      _, image, status = luup.inet.wget ("http://" .. ip .. url, timeout, user, pass)
+  if protocol == "http" then
+    _, image, status = luup.inet.wget ("http://"..ip..url, timeout, user, pass)
+                --_, image, status = http.wget ("http://"..ip..url, timeout, user, pass)
+    _log ("Image Request User" .. user)
+  end
+  if protocol == "https" then
+    _, image, status = luup.inet.wget ("https://"..ip..url, timeout, user, pass)
+                --_, image, status = http.wget ("https://"..ip..url, timeout, user, pass)
+    _log ("Image Request User" .. user)
+  end
+  
       if status ~= 200 then
         response = "camera URL returned HTTP status: " .. status
         image = nil
@@ -961,6 +1103,300 @@ local function delete_plugin (_, p)
   return "No such plugin: " .. Plugin, "text/plain"
 end
 
+--[[
+ request_streaming
+
+Returns an video from a camera as image which reloads periodically.
+Arguments:
+cam = the device id of the camera.  This is the only mandatory argument.
+TODO STRICT TIMEOUTS
+--]]
+
+local req_streaming_listen_sock = nil
+local req_streaming_daemon_socks = {}
+
+local function request_streaming (_, p)
+
+  -- Check dependencies
+  if not posix then
+    _log("request_streaming(): *** \"lua-posix\" module required."
+        .." Please, install it in your system. ***")
+    return "MODULE MISSED"
+  end
+
+  local sid = "urn:micasaverde-com:serviceId:Camera1"
+
+  local function str_escape(str) -- unused
+    if type(str) ~= "string" then
+      return nil
+    end
+    return table.concat({string.byte(str, 1, -1)}, ",")
+  end
+
+  -- Check arguments
+  local devNo = tonumber(p.cam)
+  if not devNo then
+    return "ERROR (device No# not number)", "text/plain"
+  end
+  local cam = luup.devices[devNo]
+  if not cam then
+    return "ERROR (no device)", "text/plain"
+  end
+
+  -- Get IP configuration util
+  -- Tries to extract ip:port from address
+  -- passed as 1st argument.
+  -- Resets camip, camport if error.
+  local camip, camport
+  local function extract_addr(camaddr)
+    if camaddr and not camip then
+      camip, camport = string.match(camaddr, "([^:]+):(%d+)")
+      if not tonumber(camport) then -- Port error. decline
+        camip = nil
+      end
+      if not camip then           -- No port specified
+        camip = camaddr
+        camport = 80
+      else                      -- All ok
+        camport = tonumber(camport)
+      end
+    end
+  end
+  -- Priority: first is most important
+  -- If first is found, others will be ignored
+  extract_addr(p.ip)
+  extract_addr(luup.variable_get(sid, "IP", devNo))
+  extract_addr(luup.attr_get("ip", devNo))
+
+  -- Get other configuration variables
+  local imgurl         = luup.variable_get(sid, "URL", devNo)
+  local streamingurl   = luup.variable_get(sid, "DirectStreamingURL",
+                                                            devNo)
+  local camusername    = luup.variable_get(sid, "username", devNo)
+  local campassword    = luup.variable_get(sid, "password", devNo)
+  local camprotocol    = luup.variable_get(sid, "Protocol", devNo)
+  local timeout        = luup.variable_get(sid, "Timeout",  devNo)
+  local myIP           = http.myIP
+
+  -- Timeout control tools
+  timeout = tonumber(timeout) or DEFAULT_REQUEST_STREAMING_TIMEOUT
+  local starttime = socket.gettime()
+  local function is_timeout()
+    local curtime = socket.gettime()
+    local timeelapsed = curtime - starttime
+    local timeleft = timeout - timeelapsed
+    if timeelapsed >= timeout then
+      local timeelapsed
+      return true, timeelapsed, timeleft
+    else
+      return false, timeelapsed, timeleft
+    end
+  end
+
+  -- DEBUG
+  local function printcfg()
+    print("camip", camip)
+    print("camport", camport)
+    print("streamurl", streamingurl)
+    print("camusername", camusername)
+    print("campassword", campassword)
+    print("camprotocol", camprotocol)
+  end
+
+  -- DEBUG
+  --print("CFG received ------------")
+  --printcfg()
+
+  -- Check mandatory arguments
+  if (not camip or camip == "")
+  or (not camport)
+  or (not streamingurl or streamingurl == "")
+  or (not camprotocol or
+          (camprotocol ~= "http" and camprotocol ~= "https"))
+  then
+    _log("request_streaming(): Unsupported device configuration")
+    return "UNSUPPORTED DEVICE CONFIGURATION"
+  end
+
+  -- Main logic ---------
+
+  local pid = posix.fork()
+  local client_sock, server_listen_sock
+  local cam_sock, cam_ssl_sock
+
+  if pid == -1 then
+    return "fork() ERROR"
+  end
+
+  if pid == 0 then
+    -- Video streaming thread:
+    -- Server socket should be closed because
+    -- openLuup reloading/restarting will be
+    -- impossible until video transmission ends.
+    server_listen_sock = shared.get_current_server_sock()
+    -- Should work. But not works. I guess
+    -- problem is in the lua-socket.
+    -- But maybe in me.
+    -- reload() request will kill all childrens
+    -- before openLuup reload because of this.
+    --server_listen_sock:close() -- XXX
+    client_sock = shared.get_current_client_sock()
+
+    if not http.close_all_sockets_except_client(client_sock) then
+      os.exit(1)
+    end
+  else
+    -- Server:
+    -- This connection should be unavailable for
+    -- server to avoid data corrupting.
+    client_sock = http.get_current_client_sock()
+    http.close_client_socket(client_sock)
+    client_sock:close()
+    luup.child_processes[pid] = true
+    _log(string.format("request_streaming():"
+        .." forked to PID %s", tostring(pid)))
+    -- Return control to server's main loop
+    return nil
+  end
+
+  -- Video streaming thread: -----
+
+  -- Generate authorization header
+  local auth_header = string.format("Authorization: Basic %s",
+      mime.b64(camusername..":"..campassword))
+  -- Generate GET
+  local get_req_1st_str = string.format("GET %s HTTP/1.1", streamingurl)
+
+  -- Build request
+  local HTTP_REQUEST = table.concat({
+    get_req_1st_str,
+    "Host: "..tostring(camip),
+    auth_header,
+    "",
+    "",
+  }, "\r\n")
+
+  local function connect_to_camera()
+
+    local sock, sslsock
+
+    -- Create sock
+    sock = socket.tcp()
+    if not sock then
+      print("connect_to_camera(): cannot create tcp socket")
+      os.exit(1)
+    end
+
+    -- Connect to host
+    local connected = false
+    local ok, descr = sock:connect(camip, tonumber(camport))
+    if ok then
+      connected = true
+    else
+      print("connect_to_camera(): cannot connect to host: "..tostring(descr))
+      sock:close()
+    end
+
+    -- SSL wrap
+    if camprotocol == "https" then
+
+      sslsock, descr = ssl.wrap(sock, {
+        mode = "client",
+        protocol = "tlsv1_2",
+        --verify = { "peer", "fail_if_no_peer_cert" },
+        verify = "none",
+        options = "all",
+      })
+
+      if not sslsock then
+        print("connect_to_camera(): cannot wrap socket by ssl: "..tostring(descr))
+        sock:close()
+        os.exit(45)
+      end
+
+      local ok, descr = sslsock:dohandshake()
+      if not ok then
+        print("connect_to_camera(): cannot do ssl handshake: "..tostring(descr))
+        sslsock:close()
+        connected = false
+      end
+    end
+
+    if connected then
+      cam_sock = sock
+      cam_ssl_sock = sslsock
+      return true
+    else
+      return false
+    end
+  end
+
+  local function send_request_to_camera()
+    local sock = cam_ssl_sock or cam_sock
+    sock:settimeout(timeout)
+    local ok, descr = sock:send(HTTP_REQUEST)
+    if not ok then
+      print("Cannot send HTTP request to camera:", descr)
+      os.exit(1)
+    end
+    return true
+  end
+
+  local function transfer_part_of_video_to_client()
+    local sock = cam_ssl_sock or cam_sock
+    local data, descr, datapart = sock:receive("*a")
+    if not data
+    and descr == "timeout"
+    or descr == "wantread" then
+      data = datapart
+    else
+      print("Video thread: Cannot receive part of data from camera:", descr)
+      os.exit(1)
+    end
+
+    local ok, descr = client_sock:send(data)
+    if not ok then
+      print("Video thread: Cannot send part of data to client:", descr)
+      os.exit(1)
+    end
+    return true
+  end
+
+  connect_to_camera()
+  send_request_to_camera()
+
+  cam_sock:settimeout(CAM_RECV_FRAME_TIMEOUT)
+  if cam_ssl_sock then
+    cam_ssl_sock:settimeout(CAM_RECV_FRAME_TIMEOUT)
+  end
+  client_sock:settimeout()
+
+  -- Video thread main loop
+  while true do
+    transfer_part_of_video_to_client()
+  end
+
+  os.exit(0)
+end
+
+local function change_scene_mode (_, p)
+  local mode_name = p.ModeName;
+  local scene_id = tonumber(p.SceneID);
+  if not mode_name or not scene_id then
+    return "ERROR_ARG"
+  end
+  if mode_name ~= "continuous"
+  and mode_name ~= "normal"
+  then
+    return "ERROR_MODE_IS_NOT_SUPPORTED"
+  end
+  if not luup.scenes[scene_id] then
+    return "ERROR_NO_SUCH_SCENE"
+  end
+  luup.scenes[scene_id].status_mode = mode_name;
+  luup.scenes[scene_id].scene_private_data.status_mode = mode_name;
+  return "OK"
+end
 
 --
 -- Miscellaneous
@@ -1055,6 +1491,7 @@ local luup_requests = {
   lua                 = lua,
   reload              = reload,
   request_image       = request_image,
+  request_streaming   = request_streaming,
   room                = room,
   scene               = scene,
   sdata               = sdata, 
@@ -1066,6 +1503,8 @@ local luup_requests = {
   update_plugin       = update_plugin,      -- download latest plugin version
   variableget         = variableget, 
   variableset         = variableset,
+  get_task_messages   = get_task_messages,  -- get last ~100 unread messages of luup.task() (json)
+  change_scene_mode   = change_scene_mode,
   
   -- openLuup specials
   altui               = altui,              -- download AltUI version from GitHub
