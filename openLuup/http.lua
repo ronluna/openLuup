@@ -92,6 +92,8 @@ local ioutil    = require "openLuup.io"                 -- for core server funct
 local tables    = require "openLuup.servertables"       -- mimetypes and status_codes
 local servlet   = require "openLuup.servlet"
 
+local send_async = require "openLuup.send_async"
+
 --  local _log() and _debug()
 local _log, _debug = logs.register (ABOUT)
 
@@ -251,8 +253,9 @@ local function wget (request_URI, Timeout, Username, Password)
     end
     URL = url.build (URL)                             -- reconstruct request for external use
     _debug (URL)
-    scheme.TIMEOUT = Timeout or 5
-    
+   -- scheme.TIMEOUT = Timeout or 5
+    http.TIMEOUT = Timeout or 1
+        
     if Username and not URL_AUTHORIZATION then        -- 2017.06.14 build Authorization header
       local flag
       local auth = table.concat {Username, ':', Password or ''}
@@ -385,18 +388,17 @@ local function respond (request, ...)
   if client.closed then return end    -- 2018.04.12 don't bother to try and respond to closed socket!
   
   local headers, response, chunked = http_response (...)
-  send (client, headers)
   
-  local ok, err, nc
+  local ok, err, nc = true, nil, 0
+  local respsize = #response
   if chunked then
-    ok, err, nc= send_chunked (client, response, CHUNKED_LENGTH)
-  else
-    ok, err, nc = send (client, response)
+    response = send_async.gen_chunked_response(response, CHUNKED_LENGTH)
   end
+  send_async.send_async_simple(client, headers..response)
   
   local t = math.floor (1000*(socket.gettime() - request.request_start))
   local completed = "request completed (%d bytes, %d chunks, %d ms) %s"
-  _log (completed:format (#response, nc, t, tostring(client)))
+  _log (completed:format (respsize, nc, t, tostring(client)))
   
 end
  
