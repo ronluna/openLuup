@@ -353,7 +353,11 @@ local function create (scene_json)
       paused = tonumber (scene.paused) == 1,     -- 2016.04.30 
       remote = 0,
       room_num = scene.room,
-    }
+        groups = scene.groups,
+        triggers = scene.triggers,
+        status_mode = scene.status_mode or "normal" or "continuous",
+        scene_private_data = scene,
+  }
   
   -- start the timers
   local recurring = true
