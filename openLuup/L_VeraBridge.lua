@@ -96,7 +96,7 @@ ABOUT = {
 -- 2019.01.20   changed {run = job} to {job = job} in generic_action()
 --              see: http://forum.micasaverde.com/index.php/topic,118763.0.html
 -- 2019.01.26   add RemotePort to allow possible link to openLuup systems (thanks @DesT)
-
+-- 2019.03.08   started wget_light
 
 local devNo                      -- our device number
 
